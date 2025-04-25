@@ -1,0 +1,125 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error
+from scipy.stats import pearsonr
+import tensorflow as tf
+from tensorflow.keras import layers, models
+
+# Load dataset
+df = pd.read_excel('/content/Joint Data.xlsx')
+
+# Desired counts per segment
+required_counts = {
+    '0-4': 12, '5-9': 10, '10-14': 14, '15-19': 19, '20-24': 16, '25-29': 17,
+    '30-34': 25, '35-39': 24, '40-44': 17, '45-49': 12, '50-54': 11, '55-59': 15,
+    '60-64': 9, '65-69': 13, '70-74': 11, '75-79': 12, '80-84': 7, '85-89': 3
+}
+
+# Define age bins
+bins = list(range(0, 91, 5))
+bin_labels = [f"{i}-{i+4}" for i in bins[:-1]]
+df['Segment'] = pd.cut(df['Age'], bins=bins, labels=bin_labels, right=False)
+
+# Filter to match required counts
+sampled_dfs = []
+for segment, count in required_counts.items():
+    subset = df[df['Segment'] == segment]
+    sampled_dfs.append(subset.sample(n=min(count, len(subset)), random_state=42))
+
+balanced_df = pd.concat(sampled_dfs).reset_index(drop=True)
+
+# Features and labels
+X = balanced_df.loc[:, 'S1':'S2800']
+y = balanced_df['Age']
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Build model
+model = models.Sequential([
+    layers.Dense(256, activation='relu', input_shape=(X_scaled.shape[1],)),
+    layers.Dropout(0.1),
+    layers.Dense(128, activation='relu'),
+    layers.Dropout(0.1),
+    layers.Dense(1)
+])
+model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+
+# Train
+model.fit(X_scaled, y, epochs=50, batch_size=64, verbose=1)
+
+# Predict
+y_pred = model.predict(X_scaled).flatten()
+
+# 1. Plot predicted vs actual
+plt.figure(figsize=(8, 6))
+sns.scatterplot(x=y, y=y_pred, alpha=0.6)
+plt.plot([y.min(), y.max()], [y.min(), y.max()], 'r--')
+plt.xlabel('Actual Age')
+plt.ylabel('Predicted Age')
+plt.title('Predicted Age vs Actual Age')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# 2. Bin-wise MAE, STD, Correlation
+balanced_df['AgeBin'] = pd.cut(y, bins=bins, labels=[f"{i+1}-{i+5}" for i in bins[:-1]], right=False)
+abs_errors = np.abs(y - y_pred)
+bin_stats = []
+
+for label in balanced_df['AgeBin'].unique():
+    bin_mask = balanced_df['AgeBin'] == label
+    if bin_mask.sum() > 1:
+        y_bin_true = y[bin_mask]
+        y_bin_pred = y_pred[bin_mask]
+        mae = mean_absolute_error(y_bin_true, y_bin_pred)
+        std_dev = np.std(np.abs(y_bin_true - y_bin_pred))
+        corr, _ = pearsonr(y_bin_true, y_bin_pred)
+        bin_stats.append((label, mae, std_dev, corr))
+
+# Print bin-wise stats
+print("\nBin-wise Stats:")
+for b in bin_stats:
+    print(f"{b[0]} -> MAE: {b[1]:.2f}, Std Dev: {b[2]:.2f}, Correlation: {b[3]:.2f}")
+
+# Overall metrics
+overall_mae = mean_absolute_error(y, y_pred)
+overall_std = np.std(abs_errors)
+overall_corr, _ = pearsonr(y, y_pred)
+
+print(f"\nOverall MAE: {overall_mae:.2f}")
+print(f"Overall STD of Abs Errors: {overall_std:.2f}")
+print(f"Overall Correlation: {overall_corr:.2f}")
+
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
+
+print("\n\nBinary Classification Metrics for Age Thresholds (Below N vs N+):\n")
+
+for threshold in range(12, 22):  # From 12 to 21
+    binary_labels = (y >= threshold).astype(int)  # 1 if age >= threshold, else 0
+
+    # Simple threshold on predicted age
+    binary_preds = (y_pred >= threshold).astype(int)
+
+    tn, fp, fn, tp = confusion_matrix(binary_labels, binary_preds).ravel()
+
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
+    tnr = tn / (tn + fp) if (tn + fp) > 0 else 0
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+    fnr = fn / (fn + tp) if (fn + tp) > 0 else 0
+    ppv = precision_score(binary_labels, binary_preds, zero_division=0)
+    npv = tn / (tn + fn) if (tn + fn) > 0 else 0
+    f1 = f1_score(binary_labels, binary_preds, zero_division=0)
+
+    print(f"Threshold < {threshold} vs ≥ {threshold}")
+    print(f"  Accuracy  : {accuracy:.2f}")
+    print(f"  TPR       : {tpr:.2f}")
+    print(f"  TNR       : {tnr:.2f}")
+    print(f"  FPR       : {fpr:.2f}")
+    print(f"  FNR       : {fnr:.2f}")
+    print(f"  PPV       : {ppv:.2f}")
+    print(f"  NPV       : {npv:.2f}")
+    print(f"  F1-Score  : {f1:.2f}\n")
