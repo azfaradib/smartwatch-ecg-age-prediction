@@ -1,0 +1,58 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+# === Load Data ===
+file_path = '/content/drive/My Drive/Smartwatch Data.csv'  # Modify if needed
+df = pd.read_csv(file_path)
+
+# === Balance Age Segments ===
+bins = list(range(0, 91, 5))
+bin_labels = [f"{bins[i]}-{bins[i+1]-1}" for i in range(len(bins)-1)]
+df['Segment'] = pd.cut(df['Age'], bins=bins, labels=bin_labels, right=False)
+
+required_counts = {
+    '0-4': 12, '5-9': 10, '10-14': 14, '15-19': 19, '20-24': 16, '25-29': 17,
+    '30-34': 25, '35-39': 24, '40-44': 17, '45-49': 12, '50-54': 11, '55-59': 15,
+    '60-64': 9, '65-69': 13, '70-74': 11, '75-79': 12, '80-84': 7, '85-89': 3
+}
+sampled_dfs = []
+for segment, count in required_counts.items():
+    subset = df[df['Segment'] == segment]
+    sampled_dfs.append(subset.sample(n=min(count, len(subset)), random_state=42))
+balanced_df = pd.concat(sampled_dfs).reset_index(drop=True)
+
+# === Extract ECG signal data ===
+X_raw = balanced_df.loc[:, 'S1':'S2800']
+
+# === Compute HRV features ===
+balanced_df['HRV_STD'] = X_raw.std(axis=1)
+balanced_df['HRV_RMSSD'] = np.sqrt(np.mean(np.diff(X_raw.values, axis=1) ** 2, axis=1))
+
+# === Plot HRV vs Age with Titles ===
+plt.figure(figsize=(12, 5))
+
+# --- Fig. 3a ---
+plt.subplot(1, 2, 1)
+sns.scatterplot(x=balanced_df['Age'], y=balanced_df['HRV_STD'], color='darkblue', alpha=0.7)
+plt.xlabel('Age')
+plt.ylabel('HRV STD')
+plt.title('Fig. 3a. HRV STD vs Age', fontsize=12)
+plt.grid(True)
+
+# --- Fig. 3b ---
+plt.subplot(1, 2, 2)
+sns.scatterplot(x=balanced_df['Age'], y=balanced_df['HRV_RMSSD'], color='darkgreen', alpha=0.7)
+plt.xlabel('Age')
+plt.ylabel('HRV RMSSD')
+plt.title('Fig. 3b. HRV RMSSD vs Age', fontsize=12)
+plt.grid(True)
+
+# === Save and Show ===
+plt.tight_layout()
+plt.savefig("Fig3_HRV_vs_Age.png", dpi=600)
+plt.show()
