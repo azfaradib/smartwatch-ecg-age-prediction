@@ -9,7 +9,7 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 
 # Load dataset
-df = pd.read_excel('/content/Joint Data.xlsx')
+df = pd.read_excel('/content/Smartwatch Data.xlsx')
 
 # Desired counts per segment
 required_counts = {
