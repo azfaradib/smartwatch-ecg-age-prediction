@@ -1,0 +1,73 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from sklearn.preprocessing import StandardScaler
+
+# Load your actual dataset
+file_path = '/content/drive/My Drive/Smartwatch Data.csv'
+df = pd.read_csv(file_path)
+
+# Extract ECG and Age
+X_raw = df.loc[:, 'S1':'S2800']
+y = df['Age']
+
+# Add HRV features
+df['HRV_STD'] = X_raw.std(axis=1)
+df['HRV_RMSSD'] = np.sqrt(np.mean(np.diff(X_raw.values, axis=1)**2, axis=1))
+X_combined = pd.concat([X_raw, df[['HRV_STD', 'HRV_RMSSD']]], axis=1)
+
+# Normalize
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X_combined)
+X_scaled_df = pd.DataFrame(X_scaled, columns=X_combined.columns)
+X_scaled_df['Age'] = y.values
+
+# Define target ages
+target_ages = [3, 10, 20, 30, 40, 50, 60, 70]
+samples = []
+for age in target_ages:
+    match = X_scaled_df[np.isclose(X_scaled_df['Age'], age, atol=1)]
+    if not match.empty:
+        samples.append(match.sample(1, random_state=42))
+
+X_samples = np.vstack([s.drop(columns='Age').values for s in samples])
+
+# Build FNN model
+def build_feedforward(input_shape):
+    model = models.Sequential([
+        layers.Dense(256, activation='relu', input_shape=(input_shape,)),
+        layers.Dropout(0.2),
+        layers.Dense(128, activation='relu'),
+        layers.Dense(1)
+    ])
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+model = build_feedforward(X_samples.shape[1])
+
+# Saliency function
+def compute_saliency(model, x):
+    x_tensor = tf.convert_to_tensor(x.reshape(1, -1))
+    with tf.GradientTape() as tape:
+        tape.watch(x_tensor)
+        y_pred = model(x_tensor)
+    grad = tape.gradient(y_pred, x_tensor)
+    return np.abs(grad.numpy().flatten())
+
+# Plot (with 600 dpi and subfigure titles)
+fig, axes = plt.subplots(4, 2, figsize=(18, 18))
+axes = axes.flatten()
+
+for i, (x, age) in enumerate(zip(X_samples, target_ages)):
+    saliency = compute_saliency(model, x)
+    axes[i].plot(saliency[:2800])
+    axes[i].set_title(f"Fig. 6{chr(97+i)}. Age {age}", fontsize=12)
+    axes[i].set_xlabel("ECG Sample Index")
+    axes[i].set_ylabel("Saliency")
+    axes[i].grid(True)
+
+plt.tight_layout()
+plt.savefig("saliency_map_fig6.png", dpi=600)
+plt.show()
